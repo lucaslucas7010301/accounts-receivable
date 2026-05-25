@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# 仮想環境
+venv/
+env/
+
+# Django
+db.sqlite3
+*.log
+/staticfiles/
+/media/
+
+# macOS
+.DS_Store
+
+# エディタ
+.vscode/
+.idea/
+*.swp

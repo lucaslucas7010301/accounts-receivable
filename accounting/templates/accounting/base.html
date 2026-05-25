@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}売掛金管理システム{% endblock %}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Helvetica Neue", Arial, "Hiragino Sans", sans-serif;
+           font-size: 14px; background: #f5f5f5; color: #333; }
+    a { color: #0066cc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ナビ */
+    nav { background: #2c3e50; padding: 0 20px; display: flex; align-items: center; gap: 4px; }
+    nav .brand { color: #fff; font-weight: bold; font-size: 15px; padding: 12px 12px 12px 0; margin-right: 12px; }
+    nav a { color: #bdc3cb; display: block; padding: 12px 10px; font-size: 13px; }
+    nav a:hover { color: #fff; text-decoration: none; background: #3d5166; }
+    .nav-group { position: relative; }
+    .nav-group > a { display: flex; align-items: center; gap: 4px; }
+    .nav-group > a::after { content: "▾"; font-size: 10px; }
+    .nav-dropdown { display: none; position: absolute; top: 100%; left: 0;
+                    background: #2c3e50; min-width: 160px; z-index: 100; box-shadow: 0 4px 8px rgba(0,0,0,.3); }
+    .nav-group:hover .nav-dropdown { display: block; }
+    .nav-dropdown a { padding: 9px 14px; white-space: nowrap; }
+
+    /* メイン */
+    main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-size: 20px; margin-bottom: 20px; padding-bottom: 8px;
+         border-bottom: 2px solid #2c3e50; }
+    h2 { font-size: 16px; margin: 20px 0 10px; }
+
+    /* メッセージ */
+    .messages { list-style: none; margin-bottom: 16px; }
+    .messages li { padding: 10px 14px; border-radius: 4px; margin-bottom: 6px; }
+    .messages .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .messages .error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    .messages .warning { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+
+    /* フォーム */
+    .form-card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+    .form-row { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group label { font-size: 12px; color: #555; font-weight: bold; }
+    .form-group input, .form-group select, .form-group textarea {
+      border: 1px solid #ccc; border-radius: 4px; padding: 6px 8px;
+      font-size: 14px; font-family: inherit; }
+    .form-group input:focus, .form-group select:focus { outline: none; border-color: #0066cc; }
+    .form-group.wide { flex: 1; min-width: 200px; }
+    .form-group.narrow { width: 120px; }
+    .form-group.medium { width: 180px; }
+
+    /* ボタン */
+    .btn { display: inline-block; padding: 7px 18px; border-radius: 4px;
+           border: none; cursor: pointer; font-size: 14px; font-family: inherit; }
+    .btn-primary  { background: #0066cc; color: #fff; }
+    .btn-primary:hover  { background: #0052a3; }
+    .btn-success  { background: #28a745; color: #fff; }
+    .btn-success:hover  { background: #1e7e34; }
+    .btn-danger   { background: #dc3545; color: #fff; }
+    .btn-danger:hover   { background: #b21f2d; }
+    .btn-secondary { background: #6c757d; color: #fff; }
+    .btn-secondary:hover { background: #545b62; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    /* テーブル */
+    table { width: 100%; border-collapse: collapse; background: #fff;
+            border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }
+    th { background: #2c3e50; color: #fff; padding: 9px 12px; text-align: left; font-size: 13px; }
+    td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f0f4f8; }
+    .amount { text-align: right; font-variant-numeric: tabular-nums; }
+    .text-right { text-align: right; }
+    .text-center { text-align: center; }
+
+    /* バッジ */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+    .badge-success { background: #d4edda; color: #155724; }
+    .badge-secondary { background: #e2e3e5; color: #383d41; }
+
+    /* 照合結果 */
+    .check-ok  { color: #155724; background: #d4edda; padding: 12px 16px; border-radius: 4px; font-weight: bold; }
+    .check-err { color: #721c24; background: #f8d7da; padding: 12px 16px; border-radius: 4px; font-weight: bold; }
+  </style>
+</head>
+<body>
+<nav>
+  <span class="brand">売掛金管理</span>
+  <div class="nav-group">
+    <a href="#">入力</a>
+    <div class="nav-dropdown">
+      <a href="{% url 'accounting:sale_create' %}">売上登録</a>
+      <a href="{% url 'accounting:receipt_create' %}">入金消込</a>
+      <a href="{% url 'accounting:journal_create' %}">手動仕訳</a>
+      <a href="{% url 'accounting:bulk_create' %}">一括登録</a>
+    </div>
+  </div>
+  <div class="nav-group">
+    <a href="#">元帳</a>
+    <div class="nav-dropdown">
+      <a href="{% url 'accounting:general_ledger' %}">総勘定元帳</a>
+      <a href="{% url 'accounting:sub_ledger' %}">補助元帳（得意先別）</a>
+    </div>
+  </div>
+  <a href="{% url 'accounting:balance_check' %}">残高照合</a>
+  <a href="/admin/" style="margin-left:auto">管理画面</a>
+</nav>
+
+<main>
+  {% if messages %}
+  <ul class="messages">
+    {% for msg in messages %}
+    <li class="{{ msg.tags }}">{{ msg }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>
