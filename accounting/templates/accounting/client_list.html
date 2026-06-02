@@ -1,0 +1,64 @@
+{% extends 'accounting/base.html' %}
+{% load humanize %}
+{% block title %}顧問先一覧 | 売掛金管理{% endblock %}
+{% block content %}
+<h1>顧問先一覧（回収ワークリスト）</h1>
+
+<form method="get" class="card">
+  <div class="form-row">
+    <div class="form-group">
+      <label>担当者</label>
+      <select name="assignee">
+        <option value="">全員</option>
+        {% for a in assignees %}
+        <option value="{{ a.id }}" {% if assignee == a.id|stringformat:'s' %}selected{% endif %}>{{ a.username }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group wide">
+      <label>顧問先検索</label>
+      <input type="text" name="q" value="{{ q }}" placeholder="コード・名称">
+    </div>
+    <div class="form-group">
+      <label>　</label>
+      <label><input type="checkbox" name="balance" value="1" {% if only_balance %}checked{% endif %}> 残高あり</label>
+    </div>
+    <div class="form-group">
+      <label>　</label>
+      <label><input type="checkbox" name="followup" value="1" {% if only_followup %}checked{% endif %}> 要フォローのみ</label>
+    </div>
+    <div class="form-group"><label>　</label><button class="btn btn-primary">絞り込み</button></div>
+  </div>
+</form>
+
+<table>
+  <thead>
+    <tr>
+      <th>顧問先</th><th>担当者</th><th class="text-right">売掛残高</th>
+      <th class="text-right">最長延滞</th><th class="text-right">90日超</th>
+      <th>最終督促</th><th>次回予定</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td><a href="{% url 'accounting:client_detail' r.client.code %}">{{ r.client.code }} {{ r.client.name }}</a></td>
+      <td>{{ r.client.assignee.username|default:"―" }}</td>
+      <td class="amount">¥{{ r.balance|floatformat:0|intcomma }}</td>
+      <td class="amount">
+        {% if r.max_overdue == None %}<span class="muted">―</span>
+        {% elif r.max_overdue > 90 %}<span class="od-red">{{ r.max_overdue }}日 🔴</span>
+        {% elif r.max_overdue > 60 %}<span class="od-yellow">{{ r.max_overdue }}日 🟡</span>
+        {% elif r.max_overdue > 0 %}{{ r.max_overdue }}日
+        {% else %}<span class="muted">未到来</span>{% endif %}
+      </td>
+      <td class="amount {% if r.over90 %}od-red{% endif %}">¥{{ r.over90|floatformat:0|intcomma }}</td>
+      <td>{% if r.last_action %}{{ r.last_action.acted_at|date:"m/d" }} {{ r.last_action.get_method_display }}{% else %}<span class="muted">―</span>{% endif %}</td>
+      <td>{% if r.next_action and r.next_action.next_action_date %}{% if r.next_action.next_action_date <= today %}<span class="od-red">{{ r.next_action.next_action_date|date:"m/d" }}</span>{% else %}{{ r.next_action.next_action_date|date:"m/d" }}{% endif %}{% else %}<span class="muted">―</span>{% endif %}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="7" class="muted text-center">該当する顧問先がありません</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

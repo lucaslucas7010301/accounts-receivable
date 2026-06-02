@@ -1,40 +1,58 @@
 from django.contrib import admin
-from .models import Account, Customer, JournalEntry, Transaction
+from simple_history.admin import SimpleHistoryAdmin
+
+from .models import (Allocation, Client, CollectionAction, ImportBatch,
+                     Invoice, MonthlyClose, MonthlyCloseLine, Receipt)
 
 
-@admin.register(Account)
-class AccountAdmin(admin.ModelAdmin):
-    list_display = ['code', 'name', 'account_type']
+@admin.register(Client)
+class ClientAdmin(SimpleHistoryAdmin):
+    list_display  = ('code', 'name', 'assignee', 'is_active')
+    list_filter   = ('is_active', 'assignee')
+    search_fields = ('code', 'name')
 
 
-@admin.register(Customer)
-class CustomerAdmin(admin.ModelAdmin):
-    list_display  = ['code', 'name', 'is_active', 'created_at']
-    list_filter   = ['is_active']
-    search_fields = ['code', 'name']
+@admin.register(Invoice)
+class InvoiceAdmin(SimpleHistoryAdmin):
+    list_display  = ('board_invoice_id', 'client', 'billing_date', 'due_date', 'amount')
+    list_filter   = ('source',)
+    search_fields = ('board_invoice_id', 'client__name')
+    date_hierarchy = 'billing_date'
 
 
-@admin.register(JournalEntry)
-class JournalEntryAdmin(admin.ModelAdmin):
-    list_display  = ['date', 'account', 'side', 'amount', 'customer', 'description', 'group_id']
-    list_filter   = ['account', 'side']
-    search_fields = ['description']
-    date_hierarchy = 'date'
+@admin.register(Receipt)
+class ReceiptAdmin(SimpleHistoryAdmin):
+    list_display  = ('receipt_date', 'client', 'amount', 'source', 'external_id')
+    list_filter   = ('source',)
+    search_fields = ('external_id', 'client__name')
+    date_hierarchy = 'receipt_date'
 
 
-@admin.register(Transaction)
-class TransactionAdmin(admin.ModelAdmin):
-    list_display  = ['date', 'transaction_type', 'customer', 'amount', 'is_posted', 'description']
-    list_filter   = ['transaction_type', 'is_posted']
-    search_fields = ['customer__name', 'description']
-    date_hierarchy = 'date'
-    actions       = ['post_transactions']
+@admin.register(Allocation)
+class AllocationAdmin(SimpleHistoryAdmin):
+    list_display = ('invoice', 'receipt', 'amount', 'method')
+    list_filter  = ('method',)
 
-    @admin.action(description='選択した取引を仕訳起票する')
-    def post_transactions(self, request, queryset):
-        count = 0
-        for t in queryset.filter(is_posted=False):
-            t.post()
-            count += 1
-        self.message_user(request, f'{count}件を起票しました。')
 
+@admin.register(CollectionAction)
+class CollectionActionAdmin(SimpleHistoryAdmin):
+    list_display  = ('acted_at', 'client', 'method', 'status', 'actor', 'next_action_date')
+    list_filter   = ('status', 'method', 'actor')
+    search_fields = ('client__name', 'content', 'result')
+
+
+@admin.register(ImportBatch)
+class ImportBatchAdmin(admin.ModelAdmin):
+    list_display = ('created_at', 'source', 'row_imported', 'row_skipped', 'row_error', 'status')
+    list_filter  = ('source', 'status')
+
+
+class MonthlyCloseLineInline(admin.TabularInline):
+    model = MonthlyCloseLine
+    extra = 0
+
+
+@admin.register(MonthlyClose)
+class MonthlyCloseAdmin(admin.ModelAdmin):
+    list_display = ('period', 'created_by', 'created_at')
+    inlines = [MonthlyCloseLineInline]

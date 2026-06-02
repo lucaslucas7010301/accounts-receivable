@@ -1,0 +1,33 @@
+{% extends 'accounting/base.html' %}
+{% load humanize %}
+{% block title %}督促ワークリスト | 売掛金管理{% endblock %}
+{% block content %}
+<h1>督促ワークリスト（要フォロー）</h1>
+
+<form method="get" class="card">
+  <div class="form-row">
+    <div class="form-group"><label>　</label><label><input type="checkbox" name="mine" value="1" {% if mine %}checked{% endif %}> 自分の担当のみ</label></div>
+    <div class="form-group"><label>　</label><label><input type="checkbox" name="overdue" value="1" {% if overdue_only %}checked{% endif %}> 予定日超過のみ</label></div>
+    <div class="form-group"><label>　</label><button class="btn btn-primary">絞り込み</button></div>
+  </div>
+</form>
+
+<table>
+  <thead><tr><th>顧問先</th><th>担当者</th><th class="text-right">売掛残高</th><th class="text-right">最長延滞</th><th>前回督促</th><th>次回予定</th><th>状態</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td><a href="{% url 'accounting:client_detail' r.action.client.code %}">{{ r.action.client.name }}</a></td>
+      <td>{{ r.action.client.assignee.username|default:"―" }}</td>
+      <td class="amount">¥{{ r.summary.balance|floatformat:0|intcomma }}</td>
+      <td class="amount">{% if r.summary.max_overdue == None %}<span class="muted">―</span>{% elif r.summary.max_overdue > 90 %}<span class="od-red">{{ r.summary.max_overdue }}日</span>{% elif r.summary.max_overdue > 60 %}<span class="od-yellow">{{ r.summary.max_overdue }}日</span>{% else %}{{ r.summary.max_overdue }}日{% endif %}</td>
+      <td>{{ r.action.acted_at|date:"m/d" }} {{ r.action.get_method_display }}{% if r.action.result %}（{{ r.action.result|truncatechars:16 }}）{% endif %}</td>
+      <td>{% if r.overdue %}<span class="od-red">{{ r.action.next_action_date|date:"m/d" }}</span>{% else %}{{ r.action.next_action_date|date:"m/d" }}{% endif %}</td>
+      <td><span class="badge badge-secondary">{{ r.action.get_status_display }}</span></td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="7" class="muted text-center">要フォローの督促はありません（顧問先詳細で「次回フォロー日」を設定すると、ここに表示されます）</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

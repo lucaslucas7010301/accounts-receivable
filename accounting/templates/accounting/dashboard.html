@@ -1,0 +1,77 @@
+{% extends 'accounting/base.html' %}
+{% load humanize %}
+{% block title %}ダッシュボード | 売掛金管理{% endblock %}
+{% block content %}
+<h1>ダッシュボード</h1>
+
+{% if last_import and last_import.status != 'success' %}
+<div class="banner-warn">⚠ 直近の取込にエラーがあります（{{ last_import.get_source_display }}：エラー{{ last_import.row_error }}件）</div>
+{% endif %}
+
+<div class="grid grid-4">
+  <div class="kpi"><div class="label">売掛金総残高</div><div class="value">¥{{ total_balance|floatformat:0|intcomma }}</div></div>
+  <div class="kpi"><div class="label">未入金請求</div><div class="value">{{ open_count }} 件</div></div>
+  <div class="kpi alert"><div class="label">期日超過残高</div><div class="value">¥{{ overdue_total|floatformat:0|intcomma }}</div></div>
+  <div class="kpi {% if followup_count %}alert{% endif %}"><div class="label">要フォロー(本日)</div><div class="value">{{ followup_count }} 件</div></div>
+</div>
+
+<div class="grid grid-2">
+  <div>
+    <h2>エイジング（未入金残高）</h2>
+    <div class="card">
+      {% for label, value, pct in aging %}
+      <div class="bar-row">
+        <span class="bl">{{ label }}日</span>
+        <div class="bar-track"><div class="bar-fill" style="width: {{ pct }}%"></div></div>
+        <span class="bv">¥{{ value|floatformat:0|intcomma }}</span>
+      </div>
+      {% endfor %}
+    </div>
+
+    <h2>滞留の大きい先 TOP5</h2>
+    <table>
+      <thead><tr><th>顧問先</th><th class="text-right">90日超</th><th class="text-right">売掛残高</th></tr></thead>
+      <tbody>
+        {% for s in top %}
+        <tr>
+          <td><a href="{% url 'accounting:client_detail' s.client.code %}">{{ s.client.name }}</a></td>
+          <td class="amount {% if s.over90 %}od-red{% endif %}">¥{{ s.over90|floatformat:0|intcomma }}</td>
+          <td class="amount">¥{{ s.balance|floatformat:0|intcomma }}</td>
+        </tr>
+        {% empty %}<tr><td colspan="3" class="muted text-center">残高のある顧問先はありません</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div>
+    <h2>要フォロー先（本日以前）</h2>
+    <table>
+      <thead><tr><th>顧問先</th><th>次回予定</th><th>担当</th></tr></thead>
+      <tbody>
+        {% for a in followups %}
+        <tr>
+          <td><a href="{% url 'accounting:client_detail' a.client.code %}">{{ a.client.name }}</a></td>
+          <td class="od-red">{{ a.next_action_date|date:"m/d" }}</td>
+          <td>{{ a.actor.username|default:"―" }}</td>
+        </tr>
+        {% empty %}<tr><td colspan="3" class="muted text-center">本日要フォローの先はありません</td></tr>{% endfor %}
+      </tbody>
+    </table>
+
+    <h2>直近の督促アクション</h2>
+    <table>
+      <thead><tr><th>日付</th><th>担当</th><th>顧問先</th><th>手段</th></tr></thead>
+      <tbody>
+        {% for a in recent %}
+        <tr>
+          <td>{{ a.acted_at|date:"m/d" }}</td>
+          <td>{{ a.actor.username|default:"―" }}</td>
+          <td><a href="{% url 'accounting:client_detail' a.client.code %}">{{ a.client.name }}</a></td>
+          <td>{{ a.get_method_display }}</td>
+        </tr>
+        {% empty %}<tr><td colspan="4" class="muted text-center">アクションはまだありません</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

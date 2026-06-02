@@ -1,0 +1,98 @@
+{% extends 'accounting/base.html' %}
+{% load humanize %}
+{% block title %}消込 | 売掛金管理{% endblock %}
+{% block content %}
+<h1>消込（入金引当）</h1>
+
+<form method="get" class="card">
+  <div class="form-row">
+    <div class="form-group wide">
+      <label>顧問先</label>
+      <select name="client" onchange="this.form.submit()">
+        <option value="">― 選択 ―</option>
+        {% for c in clients %}
+        <option value="{{ c.code }}" {% if client and c.code == client.code %}selected{% endif %}>{{ c.code }} {{ c.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+</form>
+
+{% if client %}
+<form method="post" style="display:inline">{% csrf_token %}
+  <input type="hidden" name="client" value="{{ client.code }}">
+  <input type="hidden" name="action" value="reconcile">
+  <button class="btn btn-secondary btn-sm">FIFO自動消込を再実行（手動引当は保護）</button>
+</form>
+
+<div class="grid grid-2" style="margin-top:14px;">
+  <div>
+    <h2 style="margin-top:0">入金</h2>
+    <table>
+      <thead><tr><th>入金日</th><th>区分</th><th class="text-right">金額</th><th class="text-right">未引当</th></tr></thead>
+      <tbody>
+        {% for r in receipts %}
+        <tr><td>{{ r.receipt_date|date:"m/d" }}</td><td>{{ r.get_source_display }}</td>
+          <td class="amount">¥{{ r.amount|floatformat:0|intcomma }}</td>
+          <td class="amount {% if r.unapplied %}od-yellow{% endif %}">¥{{ r.unapplied|floatformat:0|intcomma }}</td></tr>
+        {% empty %}<tr><td colspan="4" class="muted text-center">入金はありません</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div>
+    <h2 style="margin-top:0">未納の請求</h2>
+    <table>
+      <thead><tr><th>請求日</th><th>期日</th><th class="text-right">請求額</th><th class="text-right">残額</th></tr></thead>
+      <tbody>
+        {% for o in open_invoices %}
+        <tr><td>{{ o.invoice.billing_date|date:"m/d" }}</td><td>{{ o.invoice.due_date|date:"m/d" }}</td>
+          <td class="amount">¥{{ o.invoice.amount|floatformat:0|intcomma }}</td>
+          <td class="amount"><b>¥{{ o.outstanding|floatformat:0|intcomma }}</b></td></tr>
+        {% empty %}<tr><td colspan="4" class="muted text-center">未納の請求はありません</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2>引当明細</h2>
+<table>
+  <thead><tr><th>請求（期日）</th><th>入金（日付）</th><th class="text-right">引当額</th><th>方式</th><th></th></tr></thead>
+  <tbody>
+    {% for a in allocations %}
+    <tr>
+      <td>{{ a.invoice.billing_date|date:"m/d" }} 期日{{ a.invoice.due_date|date:"m/d" }}</td>
+      <td>{{ a.receipt.receipt_date|date:"m/d" }} {{ a.receipt.get_source_display }}</td>
+      <td class="amount">¥{{ a.amount|floatformat:0|intcomma }}</td>
+      <td><span class="badge {% if a.method == 'manual' %}badge-info{% else %}badge-secondary{% endif %}">{{ a.get_method_display }}</span></td>
+      <td class="text-center">
+        <form method="post" style="display:inline" onsubmit="return confirm('引当を解除しますか？');">{% csrf_token %}
+          <input type="hidden" name="client" value="{{ client.code }}">
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="alloc" value="{{ a.pk }}">
+          <button class="btn btn-sm" style="background:#eee">解除</button>
+        </form>
+      </td>
+    </tr>
+    {% empty %}<tr><td colspan="5" class="muted text-center">引当はありません</td></tr>{% endfor %}
+  </tbody>
+</table>
+
+<h2>手動で引当を追加（係争・指定入金など）</h2>
+<form method="post" class="card">{% csrf_token %}
+  <input type="hidden" name="client" value="{{ client.code }}">
+  <input type="hidden" name="action" value="manual_add">
+  <div class="form-row">
+    <div class="form-group wide"><label>入金</label>
+      <select name="receipt">{% for r in receipts %}{% if r.unapplied %}<option value="{{ r.pk }}">{{ r.receipt_date|date:"Y-m-d" }} ¥{{ r.amount|floatformat:0|intcomma }}（未引当¥{{ r.unapplied|floatformat:0|intcomma }}）</option>{% endif %}{% endfor %}</select>
+    </div>
+    <div class="form-group wide"><label>請求</label>
+      <select name="invoice">{% for o in open_invoices %}<option value="{{ o.invoice.pk }}">{{ o.invoice.billing_date|date:"Y-m-d" }} 残¥{{ o.outstanding|floatformat:0|intcomma }}</option>{% endfor %}</select>
+    </div>
+    <div class="form-group"><label>引当額</label><input type="number" name="amount" min="1" step="1"></div>
+    <div class="form-group"><label>　</label><button class="btn btn-primary">引当</button></div>
+  </div>
+</form>
+{% else %}
+<p class="muted">顧問先を選択すると、入金と未納請求・引当状況が表示されます。</p>
+{% endif %}
+{% endblock %}

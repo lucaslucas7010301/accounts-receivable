@@ -1,303 +1,273 @@
-import csv
+import csv as csvmod
 import io
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
-from django.db import transaction as db_transaction
-from django.db.models import Sum
-from django.shortcuts import redirect, render
+from django.contrib.auth import get_user_model
+from django.contrib.auth.decorators import login_required
+from django.db.models import Q, Sum
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
-from .forms import CSVUploadForm, JournalEntryForm, ReceiptForm, SaleForm
-from .models import Account, Customer, JournalEntry, Transaction
+from . import services
+from .forms import CollectionActionForm
+from .importers import import_mf_ledger, parse_csv_bytes
+from .models import (Allocation, Client, CollectionAction, ImportBatch,
+                     Invoice, MonthlyClose, MonthlyCloseLine, Receipt)
+
+ZERO = Decimal(0)
 
 
-# ─── 売上登録 ──────────────────────────────────────────────
-def sale_create(request):
-    if request.method == 'POST':
-        form = SaleForm(request.POST)
-        if form.is_valid():
-            txn = form.save(commit=False)
-            txn.transaction_type = 'sale'
-            txn.save()
-            txn.post()
-            messages.success(request, f'売上を登録しました（{txn}）')
-            return redirect('accounting:sale_create')
-    else:
-        form = SaleForm(initial={'date': timezone.localdate()})
-    return render(request, 'accounting/sale_create.html', {'form': form})
+def _client_summary(client, as_of=None):
+    as_of = as_of or date.today()
+    balance = services.client_balance(client, as_of)
+    over90 = ZERO
+    for inv in client.invoices.all():
+        out = inv.outstanding
+        if out > 0 and (as_of - inv.due_date).days > 90:
+            over90 += out
+    last_action = client.actions.first()
+    next_action = (client.actions.exclude(next_action_date=None)
+                   .exclude(status='resolved').order_by('next_action_date').first())
+    return {'client': client, 'balance': balance,
+            'max_overdue': services.client_max_overdue_days(client, as_of),
+            'over90': over90, 'last_action': last_action, 'next_action': next_action}
 
 
-# ─── 入金消込 ──────────────────────────────────────────────
-def receipt_create(request):
-    if request.method == 'POST':
-        form = ReceiptForm(request.POST)
-        if form.is_valid():
-            txn = form.save(commit=False)
-            txn.transaction_type = 'receipt'
-            txn.save()
-            txn.post()
-            messages.success(request, f'入金を登録しました（{txn}）')
-            return redirect('accounting:receipt_create')
-    else:
-        form = ReceiptForm(initial={'date': timezone.localdate()})
+# ─── S1 ダッシュボード ──────────────────────────────────────
+@login_required
+def dashboard(request):
+    today = date.today()
+    clients = Client.objects.filter(is_active=True).prefetch_related('invoices__allocations', 'actions')
+    summaries = [_client_summary(c, today) for c in clients]
 
-    balances = _ar_balances_by_customer()
-    return render(request, 'accounting/receipt_create.html', {
-        'form': form,
-        'balances': balances,
+    total_balance = sum((s['balance'] for s in summaries if s['balance'] > 0), ZERO)
+    aging, overdue_total, open_count = services.aging_summary(today)
+    aging_max = max(aging.values()) or Decimal(1)
+
+    followups = (CollectionAction.objects.exclude(next_action_date=None)
+                 .exclude(status='resolved').filter(next_action_date__lte=today)
+                 .select_related('client', 'actor').order_by('next_action_date'))
+    top = sorted([s for s in summaries if s['balance'] > 0],
+                 key=lambda s: (s['over90'], s['balance']), reverse=True)[:5]
+    recent = CollectionAction.objects.select_related('client', 'actor')[:6]
+    last_import = ImportBatch.objects.first()
+
+    return render(request, 'accounting/dashboard.html', {
+        'total_balance': total_balance, 'open_count': open_count,
+        'overdue_total': overdue_total, 'followup_count': followups.count(),
+        'aging': [(b, aging[b], int(aging[b] / aging_max * 100)) for b in services.AGING_BUCKETS],
+        'followups': followups[:8], 'top': top, 'recent': recent, 'last_import': last_import,
     })
 
 
-# ─── 手動仕訳 ──────────────────────────────────────────────
-def journal_create(request):
+# ─── S2 顧問先一覧 ──────────────────────────────────────────
+@login_required
+def client_list(request):
+    today = date.today()
+    assignee = request.GET.get('assignee', '')
+    only_balance = request.GET.get('balance', '1') == '1'
+    only_followup = request.GET.get('followup', '') == '1'
+    q = request.GET.get('q', '').strip()
+
+    clients = Client.objects.filter(is_active=True).select_related('assignee') \
+        .prefetch_related('invoices__allocations', 'actions')
+    if assignee:
+        clients = clients.filter(assignee_id=assignee)
+    if q:
+        clients = clients.filter(Q(code__icontains=q) | Q(name__icontains=q))
+
+    rows = [_client_summary(c, today) for c in clients]
+    if only_balance:
+        rows = [r for r in rows if r['balance'] > 0]
+    if only_followup:
+        rows = [r for r in rows if r['next_action'] and r['next_action'].next_action_date
+                and r['next_action'].next_action_date <= today]
+    rows.sort(key=lambda r: r['balance'], reverse=True)
+
+    assignees = get_user_model().objects.filter(clients__isnull=False).distinct()
+    return render(request, 'accounting/client_list.html', {
+        'rows': rows, 'assignees': assignees, 'assignee': assignee,
+        'only_balance': only_balance, 'only_followup': only_followup, 'q': q, 'today': today,
+    })
+
+
+# ─── S3 顧問先詳細 ──────────────────────────────────────────
+@login_required
+def client_detail(request, code):
+    client = get_object_or_404(Client, code=code)
+    today = date.today()
+
     if request.method == 'POST':
-        form = JournalEntryForm(request.POST)
+        form = CollectionActionForm(request.POST)
         if form.is_valid():
-            d = form.cleaned_data
-            last = JournalEntry.objects.order_by('-group_id').first()
-            group_id = (last.group_id or 0) + 1 if last else 1
-            with db_transaction.atomic():
-                JournalEntry.objects.create(
-                    date=d['date'], account=d['debit_account'],
-                    customer=d['debit_customer'], side='debit',
-                    amount=d['amount'], description=d['description'],
-                    group_id=group_id)
-                JournalEntry.objects.create(
-                    date=d['date'], account=d['credit_account'],
-                    customer=d['credit_customer'], side='credit',
-                    amount=d['amount'], description=d['description'],
-                    group_id=group_id)
-            messages.success(request, '仕訳を登録しました。')
-            return redirect('accounting:journal_create')
+            action = form.save(commit=False)
+            action.client = client
+            action.acted_at = timezone.now()
+            action.actor = request.user
+            action.created_by = request.user
+            action.save()
+            messages.success(request, '督促アクションを記録しました。')
+            return redirect('accounting:client_detail', code=client.code)
     else:
-        form = JournalEntryForm(initial={'date': timezone.localdate()})
-    return render(request, 'accounting/journal_create.html', {'form': form})
+        form = CollectionActionForm()
+
+    date_from = request.GET.get('date_from') or None
+    date_to = request.GET.get('date_to') or None
+    opening, ledger = services.ledger_rows(client, date_from, date_to)
+    return render(request, 'accounting/client_detail.html', {
+        'client': client, 'summary': _client_summary(client, today),
+        'open_invoices': services.open_invoices(client, today),
+        'opening': opening, 'ledger': ledger,
+        'actions': client.actions.select_related('actor').all(), 'form': form,
+        'date_from': date_from or '', 'date_to': date_to or '',
+    })
 
 
-# ─── 一括登録 ──────────────────────────────────────────────
-BULK_ROW_COUNT = 10
+# ─── S4 督促ワークリスト ────────────────────────────────────
+@login_required
+def followups(request):
+    today = date.today()
+    mine = request.GET.get('mine', '') == '1'
+    overdue_only = request.GET.get('overdue', '') == '1'
 
-def bulk_create(request):
-    csv_form = CSVUploadForm()
-    errors   = []
+    qs = (CollectionAction.objects.exclude(next_action_date=None)
+          .exclude(status='resolved').select_related('client', 'client__assignee', 'actor')
+          .order_by('next_action_date'))
+    if mine:
+        qs = qs.filter(client__assignee=request.user)
+    if overdue_only:
+        qs = qs.filter(next_action_date__lte=today)
 
-    if request.method == 'POST':
+    rows = []
+    for a in qs:
+        rows.append({'action': a, 'summary': _client_summary(a.client, today),
+                     'overdue': a.next_action_date <= today})
+    return render(request, 'accounting/followups.html',
+                  {'rows': rows, 'mine': mine, 'overdue_only': overdue_only, 'today': today})
+
+
+# ─── S5 消込（入金引当） ────────────────────────────────────
+@login_required
+def allocation(request):
+    code = request.GET.get('client', '') or request.POST.get('client', '')
+    client = Client.objects.filter(code=code).first() if code else None
+
+    if request.method == 'POST' and client:
         action = request.POST.get('action')
+        if action == 'reconcile':
+            services.reconcile_fifo(client)
+            messages.success(request, 'FIFO自動消込を再実行しました（手動引当は保護）。')
+        elif action == 'manual_add':
+            try:
+                rcp = client.receipts.get(pk=request.POST['receipt'])
+                inv = client.invoices.get(pk=request.POST['invoice'])
+                amt = Decimal(request.POST['amount'])
+                if amt <= 0 or amt > rcp.unapplied or amt > inv.outstanding:
+                    raise ValueError
+                Allocation.objects.create(receipt=rcp, invoice=inv, amount=amt,
+                                          method='manual', created_by=request.user)
+                services.reconcile_fifo(client)  # 残りを自動で埋め直す（manualは保護）
+                messages.success(request, '手動引当を登録しました。')
+            except (KeyError, ValueError, InvalidOperation, Receipt.DoesNotExist, Invoice.DoesNotExist):
+                messages.error(request, '引当額が不正です（未引当額・残額を超えていないか確認してください）。')
+        elif action == 'delete':
+            Allocation.objects.filter(pk=request.POST.get('alloc'), receipt__client=client).delete()
+            services.reconcile_fifo(client)
+            messages.success(request, '引当を解除しました。')
+        return redirect(f"{request.path}?client={client.code}")
 
-        if action == 'csv_upload':
-            csv_form = CSVUploadForm(request.POST, request.FILES)
-            if csv_form.is_valid():
-                f    = request.FILES['csv_file']
-                text = f.read().decode('utf-8-sig')
-                reader = csv.DictReader(io.StringIO(text))
-                rows, errors = _parse_bulk_rows(reader)
-                if not errors:
-                    _save_bulk_rows(rows)
-                    messages.success(request, f'CSVから {len(rows)} 件を登録しました。')
-                    return redirect('accounting:bulk_create')
-
-        elif action == 'screen_input':
-            rows_raw = []
-            for i in range(BULK_ROW_COUNT):
-                row = {
-                    'type':        request.POST.get(f'type_{i}', '').strip(),
-                    'date':        request.POST.get(f'date_{i}', '').strip(),
-                    'customer':    request.POST.get(f'customer_{i}', '').strip(),
-                    'amount':      request.POST.get(f'amount_{i}', '').strip(),
-                    'description': request.POST.get(f'description_{i}', '').strip(),
-                    'row_num':     i + 1,
-                }
-                rows_raw.append(row)
-            rows_raw = [r for r in rows_raw
-                        if r['type'] or r['date'] or r['customer'] or r['amount']]
-            rows, errors = _parse_bulk_rows(rows_raw, from_screen=True)
-            if not errors and rows:
-                _save_bulk_rows(rows)
-                messages.success(request, f'{len(rows)} 件を登録しました。')
-                return redirect('accounting:bulk_create')
-            elif not rows and not errors:
-                messages.warning(request, '入力行がありませんでした。')
-
-    customers = Customer.objects.filter(is_active=True)
-    return render(request, 'accounting/bulk_create.html', {
-        'csv_form':       csv_form,
-        'errors':         errors,
-        'bulk_row_count': range(BULK_ROW_COUNT),
-        'customers':      customers,
-    })
-
-
-def _parse_bulk_rows(rows, from_screen=False):
-    valid_rows = []
-    errors     = []
-    customers  = {c.code: c for c in Customer.objects.all()}
-
-    for i, row in enumerate(rows):
-        row_num = row.get('row_num', i + 1)
-        t    = (row.get('type') or row.get('取引種別', '')).strip()
-        d    = (row.get('date') or row.get('日付', '')).strip()
-        ckey = (row.get('customer') or row.get('得意先コード', '')).strip()
-        amt  = (row.get('amount') or row.get('金額', '')).strip()
-        desc = (row.get('description') or row.get('摘要', '')).strip()
-
-        if not any([t, d, ckey, amt]):
-            continue
-
-        if t not in ('sale', 'receipt', '売上', '入金'):
-            errors.append(f'{row_num}行目: 取引種別は sale/receipt または 売上/入金 を指定してください（値: "{t}"）')
-            continue
-        t = 'sale' if t in ('sale', '売上') else 'receipt'
-
-        from datetime import datetime
-        try:
-            d_obj = datetime.strptime(d, '%Y-%m-%d').date()
-        except ValueError:
-            errors.append(f'{row_num}行目: 日付の形式が正しくありません（値: "{d}"、例: 2025-01-15）')
-            continue
-
-        cust = customers.get(ckey)
-        if cust is None:
-            errors.append(f'{row_num}行目: 得意先コード "{ckey}" が見つかりません')
-            continue
-
-        try:
-            amount = Decimal(amt.replace(',', ''))
-            if amount <= 0:
-                raise ValueError
-        except (InvalidOperation, ValueError):
-            errors.append(f'{row_num}行目: 金額が正しくありません（値: "{amt}"）')
-            continue
-
-        valid_rows.append({
-            'transaction_type': t,
-            'date':             d_obj,
-            'customer':         cust,
-            'amount':           amount,
-            'description':      desc,
+    ctx = {'clients': Client.objects.filter(is_active=True).order_by('code'), 'client': client}
+    if client:
+        ctx.update({
+            'receipts': client.receipts.order_by('receipt_date'),
+            'open_invoices': services.open_invoices(client),
+            'allocations': Allocation.objects.filter(receipt__client=client)
+                .select_related('receipt', 'invoice').order_by('invoice__due_date'),
         })
+    return render(request, 'accounting/allocation.html', ctx)
 
-    return valid_rows, errors
+
+# ─── S6 月次残高確定・レポート ──────────────────────────────
+def _month_bounds(period):
+    y, m = int(period[:4]), int(period[5:7])
+    start = date(y, m, 1)
+    end = (date(y + (m == 12), (m % 12) + 1, 1)) - timedelta(days=1)
+    return start, end
 
 
-def _save_bulk_rows(rows):
-    with db_transaction.atomic():
+@login_required
+def monthly_close(request):
+    latest = Invoice.objects.order_by('-billing_date').first()
+    default_period = (latest.billing_date if latest else date.today()).strftime('%Y-%m')
+    period = request.GET.get('period') or request.POST.get('period') or default_period
+    start, end = _month_bounds(period)
+    prev_end = start - timedelta(days=1)
+
+    rows = []
+    for c in Client.objects.filter(is_active=True).prefetch_related('invoices__allocations', 'receipts'):
+        opening = services.client_balance(c, prev_end)
+        billed = c.invoices.filter(billing_date__range=(start, end)).aggregate(s=Sum('amount'))['s'] or ZERO
+        received = c.receipts.filter(receipt_date__range=(start, end)).aggregate(s=Sum('amount'))['s'] or ZERO
+        closing = services.client_balance(c, end)
+        if opening or billed or received or closing:
+            rows.append({'client': c, 'opening': opening, 'billed': billed,
+                         'received': received, 'closing': closing})
+    rows.sort(key=lambda r: r['closing'], reverse=True)
+    totals = {k: sum((r[k] for r in rows), ZERO) for k in ('opening', 'billed', 'received', 'closing')}
+
+    if request.method == 'POST' and request.POST.get('action') == 'close':
+        obj, created = MonthlyClose.objects.get_or_create(period=period, defaults={'created_by': request.user})
+        obj.lines.all().delete()
+        MonthlyCloseLine.objects.bulk_create(
+            [MonthlyCloseLine(close=obj, client=r['client'], balance=r['closing']) for r in rows])
+        messages.success(request, f'{period} の残高を確定しました（{len(rows)}社）。')
+        return redirect(f"{request.path}?period={period}")
+
+    if request.GET.get('export') == 'csv':
+        buf = io.StringIO()
+        w = csvmod.writer(buf)
+        w.writerow(['顧問先コード', '顧問先名', '期首残高', '当月請求', '当月入金', '期末残高'])
         for r in rows:
-            txn = Transaction.objects.create(**r)
-            txn.post()
+            w.writerow([r['client'].code, r['client'].name, r['opening'],
+                        r['billed'], r['received'], r['closing']])
+        resp = HttpResponse(buf.getvalue().encode('cp932', 'replace'),
+                            content_type='text/csv; charset=cp932')
+        resp['Content-Disposition'] = f'attachment; filename=ar_{period}.csv'
+        return resp
 
-
-# ─── 総勘定元帳 ────────────────────────────────────────────
-def general_ledger(request):
-    accounts     = Account.objects.all()
-    account_code = request.GET.get('account', '1100')
-    date_from    = request.GET.get('date_from', '')
-    date_to      = request.GET.get('date_to', '')
-
-    try:
-        account = Account.objects.get(code=account_code)
-    except Account.DoesNotExist:
-        account = accounts.first()
-
-    qs = JournalEntry.objects.filter(account=account).select_related('customer')
-    if date_from:
-        qs = qs.filter(date__gte=date_from)
-    if date_to:
-        qs = qs.filter(date__lte=date_to)
-    qs = qs.order_by('date', 'group_id')
-
-    running = Decimal(0)
-    entries = []
-    for e in qs:
-        if account.account_type == 'asset':
-            running += e.amount if e.side == 'debit' else -e.amount
-        else:
-            running += e.amount if e.side == 'credit' else -e.amount
-        entries.append({'entry': e, 'balance': running})
-
-    return render(request, 'accounting/general_ledger.html', {
-        'accounts':  accounts,
-        'account':   account,
-        'entries':   entries,
-        'date_from': date_from,
-        'date_to':   date_to,
+    closed = MonthlyClose.objects.filter(period=period).first()
+    return render(request, 'accounting/monthly_close.html', {
+        'period': period, 'rows': rows, 'totals': totals, 'closed': closed,
+        'periods': _available_periods(),
     })
 
 
-# ─── 補助元帳（得意先別） ──────────────────────────────────
-def sub_ledger(request):
-    customers   = Customer.objects.filter(is_active=True)
-    customer_id = request.GET.get('customer', '')
-    date_from   = request.GET.get('date_from', '')
-    date_to     = request.GET.get('date_to', '')
+def _available_periods():
+    months = set()
+    for d in Invoice.objects.values_list('billing_date', flat=True):
+        if d > date(2025, 10, 31):
+            months.add(d.strftime('%Y-%m'))
+    return sorted(months, reverse=True)
 
-    customer = None
-    entries  = []
 
-    if customer_id:
+# ─── S7 取込状況 ────────────────────────────────────────────
+@login_required
+def import_status(request):
+    if request.method == 'POST' and request.FILES.get('csv_file'):
         try:
-            customer = Customer.objects.get(pk=customer_id)
-        except Customer.DoesNotExist:
-            pass
+            rows = parse_csv_bytes(request.FILES['csv_file'].read())
+            r = import_mf_ledger(rows, request.user, source_ref=request.FILES['csv_file'].name)
+            msg = f"取込完了: 顧問先{r['clients']}件 / 請求{r['invoices']}件 / 入金{r['receipts']}件"
+            if r['mismatches']:
+                messages.warning(request, msg + f"（MF残高と不一致 {len(r['mismatches'])}件）")
+            else:
+                messages.success(request, msg + "（全社MF残高一致 ✅）")
+        except Exception as e:
+            messages.error(request, f'取込に失敗しました: {e}')
+        return redirect('accounting:import_status')
 
-    if customer:
-        ar = Account.objects.get(code='1100')
-        qs = JournalEntry.objects.filter(
-            account=ar, customer=customer
-        ).order_by('date', 'group_id')
-        if date_from:
-            qs = qs.filter(date__gte=date_from)
-        if date_to:
-            qs = qs.filter(date__lte=date_to)
-
-        running = Decimal(0)
-        for e in qs:
-            running += e.amount if e.side == 'debit' else -e.amount
-            entries.append({'entry': e, 'balance': running})
-
-    return render(request, 'accounting/sub_ledger.html', {
-        'customers':   customers,
-        'customer':    customer,
-        'entries':     entries,
-        'customer_id': customer_id,
-        'date_from':   date_from,
-        'date_to':     date_to,
-    })
-
-
-# ─── 残高照合 ─────────────────────────────────────────────
-def balance_check(request):
-    result = None
-    if request.method == 'POST':
-        ar = Account.objects.get(code='1100')
-
-        gl_debit  = JournalEntry.objects.filter(account=ar, side='debit' ).aggregate(s=Sum('amount'))['s'] or Decimal(0)
-        gl_credit = JournalEntry.objects.filter(account=ar, side='credit').aggregate(s=Sum('amount'))['s'] or Decimal(0)
-        gl_balance = gl_debit - gl_credit
-
-        sub_balances = _ar_balances_by_customer()
-        sub_total    = sum(sub_balances.values()) if sub_balances else Decimal(0)
-
-        result = {
-            'gl_balance':   gl_balance,
-            'sub_total':    sub_total,
-            'diff':         gl_balance - sub_total,
-            'ok':           gl_balance == sub_total,
-            'sub_balances': sub_balances,
-        }
-
-    return render(request, 'accounting/balance_check.html', {'result': result})
-
-
-# ─── 共通ヘルパー ──────────────────────────────────────────
-def _ar_balances_by_customer():
-    ar        = Account.objects.get(code='1100')
-    customers = Customer.objects.filter(is_active=True)
-    balances  = {}
-    for cust in customers:
-        debit  = JournalEntry.objects.filter(account=ar, customer=cust, side='debit' ).aggregate(s=Sum('amount'))['s'] or Decimal(0)
-        credit = JournalEntry.objects.filter(account=ar, customer=cust, side='credit').aggregate(s=Sum('amount'))['s'] or Decimal(0)
-        bal = debit - credit
-        if bal != 0:
-            balances[cust] = bal
-    return balances
+    return render(request, 'accounting/import_status.html',
+                  {'batches': ImportBatch.objects.select_related('created_by')[:50]})

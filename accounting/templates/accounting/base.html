@@ -16,106 +16,105 @@
     nav .brand { color: #fff; font-weight: bold; font-size: 15px; padding: 12px 12px 12px 0; margin-right: 12px; }
     nav a { color: #bdc3cb; display: block; padding: 12px 10px; font-size: 13px; }
     nav a:hover { color: #fff; text-decoration: none; background: #3d5166; }
-    .nav-group { position: relative; }
-    .nav-group > a { display: flex; align-items: center; gap: 4px; }
-    .nav-group > a::after { content: "▾"; font-size: 10px; }
-    .nav-dropdown { display: none; position: absolute; top: 100%; left: 0;
-                    background: #2c3e50; min-width: 160px; z-index: 100; box-shadow: 0 4px 8px rgba(0,0,0,.3); }
-    .nav-group:hover .nav-dropdown { display: block; }
-    .nav-dropdown a { padding: 9px 14px; white-space: nowrap; }
+    nav a.active { color: #fff; border-bottom: 2px solid #4a90d9; }
+    nav .nav-right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+    nav .sync { color: #9fb3c8; font-size: 12px; padding: 0 8px; }
 
     /* メイン */
-    main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
-    h1 { font-size: 20px; margin-bottom: 20px; padding-bottom: 8px;
-         border-bottom: 2px solid #2c3e50; }
-    h2 { font-size: 16px; margin: 20px 0 10px; }
+    main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-size: 20px; margin-bottom: 20px; padding-bottom: 8px; border-bottom: 2px solid #2c3e50; }
+    h2 { font-size: 15px; margin: 22px 0 10px; color: #2c3e50; }
 
-    /* メッセージ */
+    /* メッセージ・バナー */
     .messages { list-style: none; margin-bottom: 16px; }
     .messages li { padding: 10px 14px; border-radius: 4px; margin-bottom: 6px; }
     .messages .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
     .messages .error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
     .messages .warning { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+    .banner-warn { background: #fff3cd; color: #856404; border: 1px solid #ffeeba;
+                   padding: 10px 14px; border-radius: 4px; margin-bottom: 16px; }
 
-    /* フォーム */
-    .form-card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 20px; margin-bottom: 20px; }
-    .form-row { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-    .form-group { display: flex; flex-direction: column; gap: 4px; }
-    .form-group label { font-size: 12px; color: #555; font-weight: bold; }
-    .form-group input, .form-group select, .form-group textarea {
-      border: 1px solid #ccc; border-radius: 4px; padding: 6px 8px;
-      font-size: 14px; font-family: inherit; }
-    .form-group input:focus, .form-group select:focus { outline: none; border-color: #0066cc; }
-    .form-group.wide { flex: 1; min-width: 200px; }
-    .form-group.narrow { width: 120px; }
-    .form-group.medium { width: 180px; }
+    /* カード・グリッド */
+    .card { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 16px; margin-bottom: 20px; }
+    .grid { display: grid; gap: 16px; }
+    .grid-2 { grid-template-columns: 1fr 1fr; }
+    .grid-4 { grid-template-columns: repeat(4, 1fr); }
+
+    /* KPI */
+    .kpi { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 14px 16px; }
+    .kpi .label { font-size: 12px; color: #777; }
+    .kpi .value { font-size: 22px; font-weight: bold; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .kpi.alert .value { color: #c0392b; }
+
+    /* エイジングバー */
+    .bar-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 13px; }
+    .bar-row .bl { width: 64px; color: #555; }
+    .bar-row .bv { width: 96px; text-align: right; font-variant-numeric: tabular-nums; }
+    .bar-track { flex: 1; background: #eef1f4; border-radius: 3px; height: 14px; }
+    .bar-fill { background: #4a90d9; height: 14px; border-radius: 3px; }
 
     /* ボタン */
-    .btn { display: inline-block; padding: 7px 18px; border-radius: 4px;
-           border: none; cursor: pointer; font-size: 14px; font-family: inherit; }
-    .btn-primary  { background: #0066cc; color: #fff; }
-    .btn-primary:hover  { background: #0052a3; }
-    .btn-success  { background: #28a745; color: #fff; }
-    .btn-success:hover  { background: #1e7e34; }
-    .btn-danger   { background: #dc3545; color: #fff; }
-    .btn-danger:hover   { background: #b21f2d; }
-    .btn-secondary { background: #6c757d; color: #fff; }
-    .btn-secondary:hover { background: #545b62; }
+    .btn { display: inline-block; padding: 7px 16px; border-radius: 4px; border: none;
+           cursor: pointer; font-size: 13px; font-family: inherit; }
+    .btn-primary  { background: #0066cc; color: #fff; } .btn-primary:hover { background: #0052a3; }
+    .btn-secondary { background: #6c757d; color: #fff; } .btn-secondary:hover { background: #545b62; }
     .btn-sm { padding: 4px 10px; font-size: 12px; }
 
     /* テーブル */
-    table { width: 100%; border-collapse: collapse; background: #fff;
-            border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }
-    th { background: #2c3e50; color: #fff; padding: 9px 12px; text-align: left; font-size: 13px; }
-    td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #ddd;
+            border-radius: 6px; overflow: hidden; }
+    th { background: #2c3e50; color: #fff; padding: 8px 10px; text-align: left; font-size: 12px; }
+    td { padding: 7px 10px; border-bottom: 1px solid #eee; font-size: 13px; }
     tr:last-child td { border-bottom: none; }
-    tr:hover td { background: #f0f4f8; }
+    tbody tr:hover td { background: #f0f4f8; }
     .amount { text-align: right; font-variant-numeric: tabular-nums; }
-    .text-right { text-align: right; }
-    .text-center { text-align: center; }
+    .text-right { text-align: right; } .text-center { text-align: center; }
+    .muted { color: #999; }
+    tr.total td { background: #f7f9fb; font-weight: bold; border-top: 2px solid #ccc; }
 
-    /* バッジ */
+    /* バッジ・延滞色 */
     .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
     .badge-success { background: #d4edda; color: #155724; }
     .badge-secondary { background: #e2e3e5; color: #383d41; }
+    .badge-info { background: #d1ecf1; color: #0c5460; }
+    .od-yellow { color: #b8860b; font-weight: bold; }
+    .od-red { color: #c0392b; font-weight: bold; }
 
-    /* 照合結果 */
-    .check-ok  { color: #155724; background: #d4edda; padding: 12px 16px; border-radius: 4px; font-weight: bold; }
-    .check-err { color: #721c24; background: #f8d7da; padding: 12px 16px; border-radius: 4px; font-weight: bold; }
+    /* フォーム */
+    .form-row { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group label { font-size: 12px; color: #555; font-weight: bold; }
+    .form-group input, .form-group select, .form-group textarea {
+      border: 1px solid #ccc; border-radius: 4px; padding: 6px 8px; font-size: 13px; font-family: inherit; }
+    .form-group.wide { flex: 1; min-width: 220px; }
   </style>
 </head>
 <body>
 <nav>
   <span class="brand">売掛金管理</span>
-  <div class="nav-group">
-    <a href="#">入力</a>
-    <div class="nav-dropdown">
-      <a href="{% url 'accounting:sale_create' %}">売上登録</a>
-      <a href="{% url 'accounting:receipt_create' %}">入金消込</a>
-      <a href="{% url 'accounting:journal_create' %}">手動仕訳</a>
-      <a href="{% url 'accounting:bulk_create' %}">一括登録</a>
-    </div>
+  {% url 'accounting:dashboard' as u_dash %}
+  <a href="{{ u_dash }}" class="{% if request.path == u_dash %}active{% endif %}">ダッシュボード</a>
+  <a href="{% url 'accounting:client_list' %}" class="{% if '/clients' in request.path %}active{% endif %}">顧問先</a>
+  <a href="{% url 'accounting:followups' %}" class="{% if '/followups' in request.path %}active{% endif %}">督促</a>
+  <a href="{% url 'accounting:allocation' %}" class="{% if '/allocation' in request.path %}active{% endif %}">消込</a>
+  <a href="{% url 'accounting:monthly_close' %}" class="{% if '/monthly' in request.path %}active{% endif %}">月次</a>
+  <a href="{% url 'accounting:import_status' %}" class="{% if '/imports' in request.path %}active{% endif %}">取込</a>
+  <div class="nav-right">
+    {% if last_sync %}<span class="sync">最終同期: {{ last_sync }}</span>{% endif %}
+    <a href="/admin/">管理画面</a>
+    {% if user.is_authenticated %}
+      <span class="sync">{{ user.username }}</span>
+      <a href="{% url 'logout' %}">ログアウト</a>
+    {% endif %}
   </div>
-  <div class="nav-group">
-    <a href="#">元帳</a>
-    <div class="nav-dropdown">
-      <a href="{% url 'accounting:general_ledger' %}">総勘定元帳</a>
-      <a href="{% url 'accounting:sub_ledger' %}">補助元帳（得意先別）</a>
-    </div>
-  </div>
-  <a href="{% url 'accounting:balance_check' %}">残高照合</a>
-  <a href="/admin/" style="margin-left:auto">管理画面</a>
 </nav>
 
 <main>
   {% if messages %}
   <ul class="messages">
-    {% for msg in messages %}
-    <li class="{{ msg.tags }}">{{ msg }}</li>
-    {% endfor %}
+    {% for msg in messages %}<li class="{{ msg.tags }}">{{ msg }}</li>{% endfor %}
   </ul>
   {% endif %}
-
   {% block content %}{% endblock %}
 </main>
 </body>

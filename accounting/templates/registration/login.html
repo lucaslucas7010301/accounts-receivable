@@ -1,0 +1,12 @@
+{% extends 'accounting/base.html' %}
+{% block title %}ログイン | 売掛金管理{% endblock %}
+{% block content %}
+<h1>ログイン</h1>
+<form method="post" class="card" style="max-width:360px;">
+  {% csrf_token %}
+  {% if form.errors %}<div class="banner-warn">ユーザー名またはパスワードが正しくありません。</div>{% endif %}
+  <div class="form-row"><div class="form-group wide"><label>ユーザー名</label>{{ form.username }}</div></div>
+  <div class="form-row"><div class="form-group wide"><label>パスワード</label>{{ form.password }}</div></div>
+  <button class="btn btn-primary">ログイン</button>
+</form>
+{% endblock %}

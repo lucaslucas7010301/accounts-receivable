@@ -1,123 +1,197 @@
+from django.conf import settings
 from django.db import models
-from django.db import transaction as db_transaction
+from django.db.models import Sum
+from simple_history.models import HistoricalRecords
 
 
-class Account(models.Model):
-    """勘定科目マスタ（固定3科目）"""
-    TYPE_CHOICES = [
-        ('asset',   '資産'),
-        ('revenue', '収益'),
-    ]
-    code         = models.CharField('科目コード', max_length=10, unique=True)
-    name         = models.CharField('科目名',    max_length=50)
-    account_type = models.CharField('科目区分',  max_length=10, choices=TYPE_CHOICES)
+class Audited(models.Model):
+    """監査フィールド共通基底（登録者・日時・更新日時）。
 
-    class Meta:
-        verbose_name        = '勘定科目'
-        verbose_name_plural = '勘定科目'
-        ordering            = ['code']
-
-    def __str__(self):
-        return f'{self.code} {self.name}'
-
-
-class Customer(models.Model):
-    """得意先マスタ"""
-    code       = models.CharField('得意先コード', max_length=20, unique=True)
-    name       = models.CharField('得意先名',    max_length=100)
-    is_active  = models.BooleanField('有効',     default=True)
+    created_by は本来必須だが、MVP段階では admin/シード作成を容易にするため null 許容。
+    本番では認証ミドルウェアで自動補完し非null化する想定（docs/db_design.md §7）。
+    """
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+                                   null=True, blank=True, related_name='+',
+                                   verbose_name='登録者')
     created_at = models.DateTimeField('登録日時', auto_now_add=True)
+    updated_at = models.DateTimeField('更新日時', auto_now=True)
 
     class Meta:
-        verbose_name        = '得意先'
-        verbose_name_plural = '得意先'
-        ordering            = ['code']
+        abstract = True
+
+
+class Client(Audited):
+    """顧問先（得意先）"""
+    code               = models.CharField('顧問先コード', max_length=20, unique=True)
+    name               = models.CharField('顧問先名', max_length=100)
+    is_active          = models.BooleanField('有効', default=True)
+    assignee           = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                                           null=True, blank=True, related_name='clients',
+                                           verbose_name='担当者')
+    closing_day        = models.PositiveSmallIntegerField('締め日', null=True, blank=True)
+    payment_terms_days = models.PositiveSmallIntegerField('入金サイト(日)', null=True, blank=True)
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = verbose_name_plural = '顧問先'
+        ordering = ['code']
 
     def __str__(self):
         return f'{self.code} {self.name}'
 
 
-class JournalEntry(models.Model):
-    """仕訳明細（複式簿記の1行 = 借方または貸方）"""
-    SIDE_CHOICES = [('debit', '借方'), ('credit', '貸方')]
-
-    date        = models.DateField('仕訳日付')
-    account     = models.ForeignKey(Account,  on_delete=models.PROTECT,
-                                    verbose_name='勘定科目')
-    customer    = models.ForeignKey(Customer, on_delete=models.PROTECT,
-                                    null=True, blank=True,
-                                    verbose_name='得意先',
-                                    related_name='journal_entries')
-    side        = models.CharField('借貸区分', max_length=6, choices=SIDE_CHOICES)
-    amount      = models.DecimalField('金額', max_digits=12, decimal_places=0)
-    description = models.CharField('摘要', max_length=200, blank=True)
-    # 同一取引の借方・貸方2行を結ぶID（Transaction.pk、または手動仕訳連番）
-    group_id    = models.IntegerField('仕訳グループID', null=True, blank=True)
-    created_at  = models.DateTimeField('登録日時', auto_now_add=True)
-
-    class Meta:
-        verbose_name        = '仕訳'
-        verbose_name_plural = '仕訳'
-        ordering            = ['date', 'group_id', 'side']
-
-    def __str__(self):
-        return (f'{self.date} [{self.get_side_display()}] '
-                f'{self.account.name} {self.amount:,.0f}円')
-
-
-class Transaction(models.Model):
-    """取引（売上発生・入金の業務記録）"""
-    TYPE_CHOICES = [
-        ('sale',    '売上'),
-        ('receipt', '入金'),
-    ]
-    transaction_type = models.CharField('取引種別', max_length=10, choices=TYPE_CHOICES)
-    date             = models.DateField('取引日付')
-    customer         = models.ForeignKey(Customer, on_delete=models.PROTECT,
-                                         verbose_name='得意先')
-    amount           = models.DecimalField('金額', max_digits=12, decimal_places=0)
+class Invoice(Audited):
+    """請求/売上（board由来）"""
+    client           = models.ForeignKey(Client, on_delete=models.PROTECT,
+                                          related_name='invoices', verbose_name='顧問先')
+    board_invoice_id = models.CharField('board請求ID', max_length=50, unique=True)
+    billing_date     = models.DateField('請求日')
+    due_date         = models.DateField('入金期日')
+    amount           = models.DecimalField('請求額', max_digits=12, decimal_places=0)
     description      = models.CharField('摘要', max_length=200, blank=True)
-    is_posted        = models.BooleanField('起票済', default=False)
-    created_at       = models.DateTimeField('登録日時', auto_now_add=True)
+    source           = models.CharField('取込元', max_length=10, default='board')
+    history = HistoricalRecords()
 
     class Meta:
-        verbose_name        = '取引'
-        verbose_name_plural = '取引'
-        ordering            = ['-date', '-created_at']
+        verbose_name = verbose_name_plural = '請求'
+        ordering = ['billing_date']
+        indexes = [
+            models.Index(fields=['client', 'billing_date']),
+            models.Index(fields=['client', 'due_date']),
+        ]
+
+    @property
+    def allocated(self):
+        return self.allocations.aggregate(s=Sum('amount'))['s'] or 0
+
+    @property
+    def outstanding(self):
+        return self.amount - self.allocated
 
     def __str__(self):
-        return (f'{self.date} {self.get_transaction_type_display()} '
-                f'{self.customer.name} {self.amount:,.0f}円')
+        return f'{self.billing_date} {self.client.name} {self.amount:,.0f}円'
 
-    def post(self):
-        """取引から仕訳を自動起票する。起票済の場合はスキップ（冪等）。"""
-        if self.is_posted:
-            return
-        ar    = Account.objects.get(code='1100')  # 売掛金
-        sales = Account.objects.get(code='4000')  # 売上高
-        cash  = Account.objects.get(code='1000')  # 現預金
-        desc  = self.description or f'{self.get_transaction_type_display()} {self.customer.name}'
 
-        with db_transaction.atomic():
-            if self.transaction_type == 'sale':
-                # 借方:売掛金 / 貸方:売上高
-                JournalEntry.objects.create(
-                    date=self.date, account=ar, customer=self.customer,
-                    side='debit',  amount=self.amount,
-                    description=desc, group_id=self.pk)
-                JournalEntry.objects.create(
-                    date=self.date, account=sales, customer=self.customer,
-                    side='credit', amount=self.amount,
-                    description=desc, group_id=self.pk)
-            elif self.transaction_type == 'receipt':
-                # 借方:現預金 / 貸方:売掛金
-                JournalEntry.objects.create(
-                    date=self.date, account=cash, customer=self.customer,
-                    side='debit',  amount=self.amount,
-                    description=desc, group_id=self.pk)
-                JournalEntry.objects.create(
-                    date=self.date, account=ar, customer=self.customer,
-                    side='credit', amount=self.amount,
-                    description=desc, group_id=self.pk)
-            self.is_posted = True
-            self.save()
+class Receipt(Audited):
+    """入金（MF/銀行/NSS由来）"""
+    SOURCE_CHOICES = [('mf_bank', 'MF/銀行'), ('nss', 'NSS引落'), ('manual', '手動')]
+
+    client       = models.ForeignKey(Client, on_delete=models.PROTECT,
+                                      related_name='receipts', verbose_name='顧問先')
+    external_id  = models.CharField('連携明細ID', max_length=50, unique=True, null=True, blank=True)
+    receipt_date = models.DateField('入金日')
+    amount       = models.DecimalField('入金額', max_digits=12, decimal_places=0)
+    source       = models.CharField('入金元', max_length=10, choices=SOURCE_CHOICES, default='mf_bank')
+    description  = models.CharField('摘要', max_length=200, blank=True)
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = verbose_name_plural = '入金'
+        ordering = ['receipt_date']
+        indexes = [models.Index(fields=['client', 'receipt_date'])]
+
+    @property
+    def allocated(self):
+        return self.allocations.aggregate(s=Sum('amount'))['s'] or 0
+
+    @property
+    def unapplied(self):
+        return self.amount - self.allocated
+
+    def __str__(self):
+        return f'{self.receipt_date} {self.client.name} {self.amount:,.0f}円'
+
+
+class Allocation(Audited):
+    """消込（入金↔請求の引当）"""
+    METHOD_CHOICES = [('fifo_auto', 'FIFO自動'), ('manual', '手動')]
+
+    receipt = models.ForeignKey(Receipt, on_delete=models.PROTECT,
+                                related_name='allocations', verbose_name='入金')
+    invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT,
+                                related_name='allocations', verbose_name='請求')
+    amount  = models.DecimalField('引当額', max_digits=12, decimal_places=0)
+    method  = models.CharField('引当方式', max_length=10, choices=METHOD_CHOICES, default='fifo_auto')
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = verbose_name_plural = '消込'
+
+    def __str__(self):
+        return f'{self.invoice} ← {self.amount:,.0f}円 ({self.get_method_display()})'
+
+
+class CollectionAction(Audited):
+    """督促アクション"""
+    METHOD_CHOICES = [('call', '電話'), ('email', 'メール'), ('visit', '訪問'),
+                      ('letter', '文書'), ('other', 'その他')]
+    STATUS_CHOICES = [('open', '未対応'), ('in_progress', '督促中'), ('resolved', '解決')]
+
+    client           = models.ForeignKey(Client, on_delete=models.PROTECT,
+                                          related_name='actions', verbose_name='顧問先')
+    acted_at         = models.DateTimeField('実施日時')
+    actor            = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+                                         null=True, blank=True, related_name='+',
+                                         verbose_name='担当者')
+    method           = models.CharField('手段', max_length=10, choices=METHOD_CHOICES)
+    content          = models.TextField('内容', blank=True)
+    result           = models.TextField('結果', blank=True)
+    status           = models.CharField('状態', max_length=12, choices=STATUS_CHOICES, default='in_progress')
+    next_action_date = models.DateField('次回フォロー日', null=True, blank=True)
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = verbose_name_plural = '督促アクション'
+        ordering = ['-acted_at']
+        indexes = [
+            models.Index(fields=['client', 'acted_at']),
+            models.Index(fields=['status', 'next_action_date']),
+        ]
+
+    def __str__(self):
+        return f'{self.acted_at:%Y-%m-%d} {self.client.name} {self.get_method_display()}'
+
+
+class ImportBatch(Audited):
+    """取込バッチ（連携の監査）"""
+    SOURCE_CHOICES = [('board', 'board'), ('mf', 'MF入金'), ('nss', 'NSS')]
+    STATUS_CHOICES = [('success', '成功'), ('partial', '一部'), ('failed', '失敗')]
+
+    source       = models.CharField('取込元', max_length=10, choices=SOURCE_CHOICES)
+    source_ref   = models.CharField('取込対象', max_length=200, blank=True)
+    row_total    = models.IntegerField('対象件数', default=0)
+    row_imported = models.IntegerField('取込件数', default=0)
+    row_skipped  = models.IntegerField('スキップ', default=0)
+    row_error    = models.IntegerField('エラー', default=0)
+    status       = models.CharField('状態', max_length=10, choices=STATUS_CHOICES, default='success')
+    log          = models.TextField('ログ', blank=True)
+
+    class Meta:
+        verbose_name = verbose_name_plural = '取込バッチ'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.created_at:%Y-%m-%d %H:%M} {self.get_source_display()}'
+
+
+class MonthlyClose(Audited):
+    """月次残高確定"""
+    period     = models.CharField('対象月(YYYY-MM)', max_length=7, unique=True)
+    note       = models.TextField('備考', blank=True)
+
+    class Meta:
+        verbose_name = verbose_name_plural = '月次残高確定'
+        ordering = ['-period']
+
+    def __str__(self):
+        return self.period
+
+
+class MonthlyCloseLine(models.Model):
+    """月次残高確定の顧問先別スナップショット"""
+    close   = models.ForeignKey(MonthlyClose, on_delete=models.CASCADE, related_name='lines')
+    client  = models.ForeignKey(Client, on_delete=models.PROTECT, verbose_name='顧問先')
+    balance = models.DecimalField('期末残高', max_digits=12, decimal_places=0)
+
+    class Meta:
+        verbose_name = verbose_name_plural = '月次残高明細'

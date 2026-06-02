@@ -37,6 +37,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.humanize',
+    'simple_history',
     'accounting',
 ]
 
@@ -48,7 +50,14 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # 変更履歴に「誰が」を記録（simple-history）
+    'simple_history.middleware.HistoryRequestMiddleware',
 ]
+
+# 認証
+LOGIN_URL = 'login'
+LOGIN_REDIRECT_URL = 'accounting:dashboard'
+LOGOUT_REDIRECT_URL = 'login'
 
 ROOT_URLCONF = 'accounts_receivable.urls'
 

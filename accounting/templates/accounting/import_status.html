@@ -1,0 +1,35 @@
+{% extends 'accounting/base.html' %}
+{% block title %}取込状況 | 売掛金管理{% endblock %}
+{% block content %}
+<h1>取込状況</h1>
+
+<div class="card">
+  <h2 style="margin-top:0">MF補助元帳CSVを取り込む</h2>
+  <form method="post" enctype="multipart/form-data">{% csrf_token %}
+    <div class="form-row">
+      <div class="form-group wide"><label>CSVファイル（MF会計の売掛金補助元帳・CP932）</label>
+        <input type="file" name="csv_file" accept=".csv" required></div>
+      <div class="form-group"><label>　</label><button class="btn btn-primary">取り込む</button></div>
+    </div>
+    <p class="muted">借方→請求 / 貸方→入金 として取り込み、繰越補完・FIFO消込・MF残高照合を自動実行します（既存データは置換）。</p>
+  </form>
+</div>
+
+<h2>取込履歴</h2>
+<table>
+  <thead><tr><th>実行日時</th><th>ソース</th><th class="text-right">取込</th><th class="text-right">スキップ</th><th class="text-right">エラー</th><th>状態</th><th>ログ</th></tr></thead>
+  <tbody>
+    {% for b in batches %}
+    <tr>
+      <td>{{ b.created_at|date:"Y-m-d H:i" }}</td>
+      <td>{{ b.get_source_display }} {% if b.source_ref %}<span class="muted">({{ b.source_ref }})</span>{% endif %}</td>
+      <td class="amount">{{ b.row_imported }}</td>
+      <td class="amount">{{ b.row_skipped }}</td>
+      <td class="amount {% if b.row_error %}od-red{% endif %}">{{ b.row_error }}</td>
+      <td>{% if b.status == 'success' %}<span class="badge badge-success">成功</span>{% elif b.status == 'partial' %}<span class="badge" style="background:#fff3cd;color:#856404">一部</span>{% else %}<span class="badge" style="background:#f8d7da;color:#721c24">失敗</span>{% endif %}</td>
+      <td>{% if b.log %}<details><summary class="muted">表示</summary><pre style="white-space:pre-wrap;font-size:12px;margin-top:6px">{{ b.log }}</pre></details>{% else %}<span class="muted">―</span>{% endif %}</td>
+    </tr>
+    {% empty %}<tr><td colspan="7" class="muted text-center">取込履歴はありません</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endblock %}

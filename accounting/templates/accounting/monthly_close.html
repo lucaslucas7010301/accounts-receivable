@@ -1,0 +1,54 @@
+{% extends 'accounting/base.html' %}
+{% load humanize %}
+{% block title %}月次残高確定 | 売掛金管理{% endblock %}
+{% block content %}
+<h1>月次残高確定・レポート</h1>
+
+<form method="get" class="card">
+  <div class="form-row">
+    <div class="form-group">
+      <label>対象月</label>
+      <select name="period" onchange="this.form.submit()">
+        {% for p in periods %}<option value="{{ p }}" {% if p == period %}selected{% endif %}>{{ p }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="form-group"><label>　</label>
+      {% if closed %}<span class="badge badge-success">確定済み（{{ closed.created_at|date:"Y-m-d" }} {{ closed.created_by.username }}）</span>
+      {% else %}<span class="badge badge-secondary">未確定</span>{% endif %}
+    </div>
+    <div class="form-group" style="margin-left:auto"><label>　</label>
+      <a class="btn btn-secondary btn-sm" href="?period={{ period }}&export=csv">CSV出力</a></div>
+  </div>
+</form>
+
+<table>
+  <thead><tr><th>顧問先</th><th class="text-right">期首残高</th><th class="text-right">当月請求</th><th class="text-right">当月入金</th><th class="text-right">期末残高</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td><a href="{% url 'accounting:client_detail' r.client.code %}">{{ r.client.code }} {{ r.client.name }}</a></td>
+      <td class="amount">¥{{ r.opening|floatformat:0|intcomma }}</td>
+      <td class="amount">¥{{ r.billed|floatformat:0|intcomma }}</td>
+      <td class="amount">¥{{ r.received|floatformat:0|intcomma }}</td>
+      <td class="amount"><b>¥{{ r.closing|floatformat:0|intcomma }}</b></td>
+    </tr>
+    {% empty %}<tr><td colspan="5" class="muted text-center">対象月の動きがありません</td></tr>{% endfor %}
+  </tbody>
+  {% if rows %}
+  <tfoot><tr class="total">
+    <td>合計（{{ rows|length }}社）</td>
+    <td class="amount">¥{{ totals.opening|floatformat:0|intcomma }}</td>
+    <td class="amount">¥{{ totals.billed|floatformat:0|intcomma }}</td>
+    <td class="amount">¥{{ totals.received|floatformat:0|intcomma }}</td>
+    <td class="amount">¥{{ totals.closing|floatformat:0|intcomma }}</td>
+  </tr></tfoot>
+  {% endif %}
+</table>
+
+<form method="post" style="margin-top:14px" onsubmit="return confirm('{{ period }} の残高を確定しますか？');">{% csrf_token %}
+  <input type="hidden" name="period" value="{{ period }}">
+  <input type="hidden" name="action" value="close">
+  <button class="btn btn-primary">{% if closed %}残高を再確定する{% else %}残高を確定する{% endif %}</button>
+  <span class="muted" style="margin-left:8px">確定すると顧問先別残高のスナップショットを保存します（MF照合・報告の証跡）。</span>
+</form>
+{% endblock %}

@@ -1,0 +1,98 @@
+{% extends 'accounting/base.html' %}
+{% load humanize %}
+{% block title %}{{ client.name }} | 売掛金管理{% endblock %}
+{% block content %}
+<p style="margin-bottom:8px"><a href="{% url 'accounting:client_list' %}">← 顧問先一覧</a></p>
+
+<div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+  <div>
+    <h1 style="border:none; margin:0; padding:0;">{{ client.name }} <span class="muted" style="font-size:14px">({{ client.code }})</span></h1>
+    <div style="margin-top:6px; color:#555;">
+      担当: {{ client.assignee.username|default:"未設定" }}　／
+      現在残高: <b style="font-size:16px">¥{{ summary.balance|floatformat:0|intcomma }}</b>　／
+      最長延滞:
+      {% if summary.max_overdue == None %}<span class="muted">未納なし</span>
+      {% elif summary.max_overdue > 90 %}<span class="od-red">{{ summary.max_overdue }}日 🔴</span>
+      {% elif summary.max_overdue > 60 %}<span class="od-yellow">{{ summary.max_overdue }}日 🟡</span>
+      {% else %}{{ summary.max_overdue }}日{% endif %}
+    </div>
+  </div>
+</div>
+
+<h2>① 未入金請求（いつの債権が残っているか）</h2>
+<table>
+  <thead><tr><th>請求日</th><th>期日</th><th class="text-right">請求額</th><th class="text-right">残額</th><th class="text-right">経過</th><th>区分</th></tr></thead>
+  <tbody>
+    {% for o in open_invoices %}
+    <tr>
+      <td>{{ o.invoice.billing_date|date:"Y-m-d" }}</td>
+      <td>{{ o.invoice.due_date|date:"Y-m-d" }}</td>
+      <td class="amount">¥{{ o.invoice.amount|floatformat:0|intcomma }}</td>
+      <td class="amount"><b>¥{{ o.outstanding|floatformat:0|intcomma }}</b></td>
+      <td class="amount">{% if o.overdue %}{% if o.days_overdue > 90 %}<span class="od-red">{{ o.days_overdue }}日</span>{% elif o.days_overdue > 60 %}<span class="od-yellow">{{ o.days_overdue }}日</span>{% else %}{{ o.days_overdue }}日{% endif %}{% else %}<span class="muted">未到来</span>{% endif %}</td>
+      <td><span class="badge {% if o.bucket == '90+' %}badge-secondary{% else %}badge-info{% endif %}">{{ o.bucket }}</span></td>
+    </tr>
+    {% empty %}<tr><td colspan="6" class="muted text-center">未入金の請求はありません</td></tr>{% endfor %}
+  </tbody>
+</table>
+
+<h2>② 取引履歴（得意先元帳）</h2>
+<form method="get" class="form-row" style="margin:0 0 8px;">
+  <div class="form-group"><label>期間 from</label><input type="date" name="date_from" value="{{ date_from }}"></div>
+  <div class="form-group"><label>to</label><input type="date" name="date_to" value="{{ date_to }}"></div>
+  <div class="form-group"><label>　</label><button class="btn btn-secondary btn-sm">表示</button></div>
+</form>
+<table>
+  <thead><tr><th>日付</th><th>区分</th><th>摘要</th><th class="text-right">増加(+)</th><th class="text-right">減少(−)</th><th class="text-right">残高</th><th>登録者</th></tr></thead>
+  <tbody>
+    <tr class="total"><td colspan="5">繰越残高</td><td class="amount">¥{{ opening|floatformat:0|intcomma }}</td><td></td></tr>
+    {% for m in ledger %}
+    <tr>
+      <td>{{ m.date|date:"Y-m-d" }}</td>
+      <td>{{ m.kind }}</td>
+      <td>{{ m.desc }}</td>
+      <td class="amount">{% if m.plus %}¥{{ m.plus|floatformat:0|intcomma }}{% endif %}</td>
+      <td class="amount">{% if m.minus %}¥{{ m.minus|floatformat:0|intcomma }}{% endif %}</td>
+      <td class="amount">¥{{ m.balance|floatformat:0|intcomma }}</td>
+      <td class="muted">{{ m.by.username|default:"system" }}</td>
+    </tr>
+    {% empty %}<tr><td colspan="7" class="muted text-center">取引がありません</td></tr>{% endfor %}
+  </tbody>
+</table>
+
+<div class="grid grid-2" style="margin-top:22px;">
+  <div>
+    <h2 style="margin-top:0">③ 督促履歴</h2>
+    <table>
+      <thead><tr><th>日時</th><th>担当</th><th>手段</th><th>内容/結果</th><th>状態</th><th>次回</th></tr></thead>
+      <tbody>
+        {% for a in actions %}
+        <tr>
+          <td>{{ a.acted_at|date:"m/d H:i" }}</td>
+          <td>{{ a.actor.username|default:"―" }}</td>
+          <td>{{ a.get_method_display }}</td>
+          <td>{{ a.content }}{% if a.result %}<br><span class="muted">→ {{ a.result }}</span>{% endif %}</td>
+          <td><span class="badge {% if a.status == 'resolved' %}badge-success{% else %}badge-secondary{% endif %}">{{ a.get_status_display }}</span></td>
+          <td>{{ a.next_action_date|date:"m/d"|default:"―" }}</td>
+        </tr>
+        {% empty %}<tr><td colspan="6" class="muted text-center">督促履歴はありません</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div>
+    <h2 style="margin-top:0">督促を記録</h2>
+    <form method="post" class="card">
+      {% csrf_token %}
+      <div class="form-row">
+        <div class="form-group"><label>手段</label>{{ form.method }}</div>
+        <div class="form-group"><label>状態</label>{{ form.status }}</div>
+        <div class="form-group"><label>次回フォロー日</label>{{ form.next_action_date }}</div>
+      </div>
+      <div class="form-row"><div class="form-group wide"><label>内容</label>{{ form.content }}</div></div>
+      <div class="form-row"><div class="form-group wide"><label>結果</label>{{ form.result }}</div></div>
+      <button class="btn btn-primary">記録する</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
