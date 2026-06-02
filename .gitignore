@@ -15,6 +15,12 @@ db.sqlite3
 /staticfiles/
 /media/
 
+# 実データ（個人情報・機密）: MF補助元帳CSV・取込ファイル等はコミットしない
+*.csv
+/data/
+/imports/
+補助元帳*
+
 # macOS
 .DS_Store
 
