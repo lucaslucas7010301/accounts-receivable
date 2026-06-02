@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -20,12 +21,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-e#scde5_3j$22gb7(3z*4+^=vha8o6hhke*$@8_&@m8iafn*l_'
+# 本番では環境変数 DJANGO_SECRET_KEY で別のキーを必ず指定すること。
+# 既定値は開発専用（このキーを本番で使わない）。
+SECRET_KEY = os.environ.get(
+    'DJANGO_SECRET_KEY',
+    'django-insecure-e#scde5_3j$22gb7(3z*4+^=vha8o6hhke*$@8_&@m8iafn*l_',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# 本番では DJANGO_DEBUG=False を環境変数で指定すること。
+DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('1', 'true', 'yes')
 
-ALLOWED_HOSTS = []
+# 本番では DJANGO_ALLOWED_HOSTS="example.com,www.example.com" のように指定。
+ALLOWED_HOSTS = [
+    h.strip() for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if h.strip()
+]
 
 
 # Application definition

@@ -21,6 +21,9 @@ db.sqlite3
 /imports/
 補助元帳*
 
+# 環境変数（SECRET_KEY等の秘密情報）
+.env
+
 # macOS
 .DS_Store
 
